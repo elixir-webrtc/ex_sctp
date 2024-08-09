@@ -13,6 +13,7 @@ defmodule ExSCTP.MixProject do
       description: "Elixir wrapper for sctp_proto library",
       package: package(),
       deps: deps(),
+      aliases: aliases(),
 
       # docs
       docs: docs(),
@@ -54,7 +55,14 @@ defmodule ExSCTP.MixProject do
       {:excoveralls, "~> 0.18", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:rustler, "~> 0.34.0", runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      format: ["format", "cmd cargo fmt --manifest-path native/ex_sctp/Cargo.toml"]
     ]
   end
 
