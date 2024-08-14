@@ -1,11 +1,11 @@
 defmodule ExSCTPTest do
   use ExUnit.Case, async: true
 
-  test "establish connection" do
+  test "send data" do
     sctp1 = ExSCTP.new()
     sctp2 = ExSCTP.new()
 
-    ExSCTP.connect(sctp1)
+    :ok = ExSCTP.connect(sctp1)
     assert {:transmit, [msg]} = ExSCTP.poll(sctp1)
     assert :none = ExSCTP.poll(sctp1)
 
@@ -25,5 +25,19 @@ defmodule ExSCTPTest do
     ExSCTP.handle_data(sctp1, msg)
     assert :connected = ExSCTP.poll(sctp1)
     assert :none = ExSCTP.poll(sctp1)
+
+    ExSCTP.open_stream(sctp2, 5)
+    assert :none = ExSCTP.poll(sctp2)
+
+    stream_id = 5
+    ppi = 53
+    data = <<1, 2, 3>>
+    ExSCTP.send(sctp2, stream_id, ppi, data)
+    assert {:transmit, [msg]} = ExSCTP.poll(sctp2)
+    assert :none = ExSCTP.poll(sctp2)
+
+    ExSCTP.handle_data(sctp1, msg)
+    assert {:stream, ^stream_id} = ExSCTP.poll(sctp1)
+    assert {:data, ^stream_id, ^ppi, ^data} = ExSCTP.poll(sctp1)
   end
 end

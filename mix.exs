@@ -61,9 +61,11 @@ defmodule ExSCTP.MixProject do
   end
 
   defp aliases do
-    # TODO: add `cargo clippy` alongside credo
+    manifest = "--manifest-path native/ex_sctp/Cargo.toml"
+
     [
-      format: ["format", "cmd cargo fmt --manifest-path native/ex_sctp/Cargo.toml"]
+      format: ["format", "cmd cargo fmt #{manifest}"],
+      credo: ["credo", "cmd cargo clippy #{manifest} -- -Dwarnings"]
     ]
   end
 
