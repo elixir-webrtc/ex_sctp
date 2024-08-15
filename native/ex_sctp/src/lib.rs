@@ -1,27 +1,40 @@
+use rustler::{Atom, Binary, Env, NifTaggedEnum, OwnedBinary, Resource, ResourceArc};
 use sctp_proto::{
     Association, AssociationHandle, ClientConfig, DatagramEvent, Endpoint, EndpointConfig,
-    Event as SctpEvent, Payload, PayloadProtocolIdentifier, ServerConfig, StreamEvent, Transmit,
+    Error as ProtoError, Event as SctpEvent, Payload, PayloadProtocolIdentifier, ServerConfig,
+    StreamEvent, Transmit,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use rustler::{Atom, Binary, Env, NifTaggedEnum, OwnedBinary, Resource, ResourceArc};
-
 mod atoms {
     rustler::atoms! {
         ok,
+        error,
+        not_connected,
+        already_exists,
+        unable_to_create,
+        invalid_id,
+        unable_to_stop,
+        unable_to_send,
     }
 }
 
 const FAKE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 5000);
+
+#[derive(NifTaggedEnum)]
+enum AtomResult {
+    Ok,
+    Error(Atom),
+}
 
 struct SctpState {
     endpoint: Endpoint,
     assoc: Option<Association>,
     handle: AssociationHandle,
     streams: Vec<u16>,
-    last_now: Instant,
+    last_timeout: Option<Instant>,
 }
 
 struct SctpResource {
@@ -35,10 +48,12 @@ impl Resource for SctpResource {}
 enum Event<'a> {
     None,
     Connected,
-    Stream(u16),
+    Disconnected,
+    StreamOpened(u16),
+    StreamClosed(u16),
     Data(u16, u32, Binary<'a>),
     Transmit(Vec<Binary<'a>>),
-    Timeout(u64),
+    Timeout(Option<u128>),
 }
 
 #[rustler::nif]
@@ -53,7 +68,7 @@ fn new() -> ResourceArc<SctpResource> {
         assoc: None,
         handle: AssociationHandle(0),
         streams: Vec::new(),
-        last_now: Instant::now(),
+        last_timeout: None,
     });
 
     ResourceArc::new(SctpResource { state })
@@ -74,8 +89,8 @@ fn connect(resource: ResourceArc<SctpResource>) -> Atom {
 }
 
 #[rustler::nif]
-fn open_stream(resource: ResourceArc<SctpResource>, id: u16) {
-    let mut state = resource.state.try_lock().unwrap();
+fn open_stream(resource: ResourceArc<SctpResource>, id: u16) -> AtomResult {
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
 
     let SctpState {
         assoc: Some(assoc),
@@ -83,45 +98,82 @@ fn open_stream(resource: ResourceArc<SctpResource>, id: u16) {
         ..
     } = &mut *state
     else {
-        return;
+        return AtomResult::Error(atoms::not_connected());
     };
 
-    // TODO verify that we already connected
+    if assoc.is_handshaking() || assoc.is_closed() {
+        return AtomResult::Error(atoms::not_connected());
+    }
 
-    // TODO handle errors
-    let res = assoc.open_stream(id, PayloadProtocolIdentifier::Unknown);
-    // TODO: detect duplicate ids
-    streams.push(id);
-
-    if let Err(err) = res {
-        println!("Err: {:?}", err);
+    match assoc.open_stream(id, PayloadProtocolIdentifier::Unknown) {
+        Ok(_) => {
+            streams.push(id);
+            AtomResult::Ok
+        }
+        Err(ProtoError::ErrStreamAlreadyExist) => AtomResult::Error(atoms::already_exists()),
+        Err(_) => AtomResult::Error(atoms::unable_to_create()),
     }
 }
 
-// TODO: close stream?
+#[rustler::nif]
+fn close_stream(resource: ResourceArc<SctpResource>, id: u16) -> AtomResult {
+    // TODO: something doesnt' work in close_stream
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
+    let SctpState {
+        assoc: Some(assoc),
+        streams,
+        ..
+    } = &mut *state
+    else {
+        return AtomResult::Error(atoms::not_connected());
+    };
+
+    let Some(idx) = streams.iter().position(|stream_id| *stream_id == id) else {
+        return AtomResult::Error(atoms::invalid_id());
+    };
+
+    streams.remove(idx);
+
+    let Ok(mut stream) = assoc.stream(id) else {
+        return AtomResult::Error(atoms::invalid_id());
+    };
+
+    let Ok(_) = stream.finish() else {
+        return AtomResult::Error(atoms::unable_to_stop());
+    };
+
+    let Ok(_) = stream.stop() else {
+        return AtomResult::Error(atoms::unable_to_stop());
+    };
+
+    AtomResult::Ok
+}
 
 #[rustler::nif]
-fn send(resource: ResourceArc<SctpResource>, id: u16, ppi: u32, data: Binary) {
-    let mut state = resource.state.try_lock().unwrap();
+fn send(resource: ResourceArc<SctpResource>, id: u16, ppi: u32, data: Binary) -> AtomResult {
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
     let SctpState {
         assoc: Some(assoc), ..
     } = &mut *state
     else {
-        return;
+        return AtomResult::Error(atoms::not_connected());
     };
 
     let Ok(mut stream) = assoc.stream(id) else {
-        return;
+        return AtomResult::Error(atoms::invalid_id());
     };
 
     let bytes: Box<[u8]> = Box::from(data.as_slice());
-    let _ = stream.write_sctp(&bytes.into(), ppi.into());
+    let Ok(_) = stream.write_sctp(&bytes.into(), ppi.into()) else {
+        return AtomResult::Error(atoms::unable_to_send());
+    };
+
+    AtomResult::Ok
 }
 
 #[rustler::nif]
-fn handle_data(resource: ResourceArc<SctpResource>, data: Binary) {
-    let mut state = resource.state.try_lock().unwrap();
-    // TODO: can we do it without copying?
+fn handle_data(resource: ResourceArc<SctpResource>, data: Binary) -> Atom {
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
     let bytes: Box<[u8]> = Box::from(data.as_slice());
 
     let res = state
@@ -129,12 +181,12 @@ fn handle_data(resource: ResourceArc<SctpResource>, data: Binary) {
         .handle(Instant::now(), FAKE_ADDR, None, None, bytes.into());
 
     let Some((handle, event)) = res else {
-        return;
+        return atoms::ok();
     };
 
     match event {
         DatagramEvent::NewAssociation(assoc) => {
-            // TODO: check if we did not already connect
+            // TODO: check if assoc does not already exist
             state.assoc = Some(assoc);
             state.handle = handle;
         }
@@ -142,18 +194,18 @@ fn handle_data(resource: ResourceArc<SctpResource>, data: Binary) {
             state
                 .assoc
                 .as_mut()
-                .expect("association for the connection")
+                .expect("Valid association")
                 .handle_event(event);
         }
-    }
+    };
+
+    atoms::ok()
 }
 
 #[rustler::nif]
-fn handle_timeout(resource: ResourceArc<SctpResource>) {
+fn handle_timeout(resource: ResourceArc<SctpResource>) -> AtomResult {
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
     let now = Instant::now();
-
-    let mut state = resource.state.try_lock().unwrap();
-    state.last_now = now;
 
     let SctpState {
         assoc: Some(assoc),
@@ -162,7 +214,7 @@ fn handle_timeout(resource: ResourceArc<SctpResource>) {
         ..
     } = &mut *state
     else {
-        return;
+        return AtomResult::Error(atoms::not_connected());
     };
 
     assoc.handle_timeout(now);
@@ -172,17 +224,20 @@ fn handle_timeout(resource: ResourceArc<SctpResource>) {
             assoc.handle_event(assoc_event);
         }
     }
+
+    AtomResult::Ok
 }
 
 #[rustler::nif]
 fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
-    let mut state = resource.state.try_lock().unwrap();
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
+    let now = Instant::now();
 
     let SctpState {
         assoc: Some(assoc),
         endpoint,
         streams,
-        last_now,
+        last_timeout,
         ..
     } = &mut *state
     else {
@@ -195,7 +250,7 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
         }
     }
 
-    while let Some(transmit) = assoc.poll_transmit(*last_now) {
+    while let Some(transmit) = assoc.poll_transmit(now) {
         if let Some(bins) = transmit_to_bins(env, transmit) {
             return Event::Transmit(bins);
         }
@@ -206,14 +261,26 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
             return Event::Connected;
         }
 
+        if let SctpEvent::AssociationLost { .. } = event {
+            // TODO: clean up state from assoc
+            return Event::Disconnected;
+        }
+
         if let SctpEvent::Stream(stream_event) = event {
+            use StreamEvent::*;
+
             match stream_event {
-                StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
+                Readable { id } | Writable { id } => {
                     // TODO: can id be duplicate?
                     streams.push(id);
-                    return Event::Stream(id);
+                    return Event::StreamOpened(id);
                 }
-                // TODO: handle other
+                Stopped { id, .. } | Finished { id } => {
+                    if let Some(idx) = streams.iter().position(|stream_id| *stream_id == id) {
+                        streams.remove(idx);
+                    };
+                    return Event::StreamClosed(id);
+                }
                 _ => {}
             }
         }
@@ -228,15 +295,23 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
             continue;
         };
 
-        let mut owned = OwnedBinary::new(chunks.len()).expect("be able to initialize binary");
-        let Ok(_) = chunks.read(owned.as_mut_slice()) else {
-            continue;
-        };
+        let mut owned = OwnedBinary::new(chunks.len()).expect("Unable to initialize binary");
+        chunks
+            .read(owned.as_mut_slice())
+            .expect("Unable to read incoming data");
 
         return Event::Data(*id, chunks.ppi as u32, Binary::from_owned(owned, env));
     }
 
-    // TODO timeouts
+    let timeout = assoc.poll_timeout();
+    if timeout != *last_timeout {
+        *last_timeout = timeout;
+        if let Some(time) = timeout {
+            let ms = time.duration_since(now).as_millis();
+            return Event::Timeout(Some(ms));
+        }
+        return Event::Timeout(None);
+    }
 
     Event::None
 }
