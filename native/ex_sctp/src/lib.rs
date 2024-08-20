@@ -271,15 +271,16 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
 
             match stream_event {
                 Readable { id } | Writable { id } => {
-                    // TODO: can id be duplicate?
-                    streams.push(id);
-                    return Event::StreamOpened(id);
+                    if !streams.iter().any(|stream_id| *stream_id == id) {
+                        streams.push(id);
+                        return Event::StreamOpened(id);
+                    };
                 }
                 Stopped { id, .. } | Finished { id } => {
                     if let Some(idx) = streams.iter().position(|stream_id| *stream_id == id) {
                         streams.remove(idx);
+                        return Event::StreamClosed(id);
                     };
-                    return Event::StreamClosed(id);
                 }
                 _ => {}
             }
