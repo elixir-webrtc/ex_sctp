@@ -59,8 +59,6 @@ enum Event<'a> {
 #[rustler::nif]
 fn new() -> ResourceArc<SctpResource> {
     let config = EndpointConfig::new().into();
-    // NOTICE: without server_config, endpoint.handle crashes on new remote association
-    // make an issue?
     let server_config = ServerConfig::new().into();
     let endpoint = Endpoint::new(config, Some(server_config));
     let state = Mutex::new(SctpState {
@@ -163,8 +161,7 @@ fn send(resource: ResourceArc<SctpResource>, id: u16, ppi: u32, data: Binary) ->
         return AtomResult::Error(atoms::invalid_id());
     };
 
-    let bytes: Box<[u8]> = Box::from(data.as_slice());
-    let Ok(_) = stream.write_sctp(&bytes.into(), ppi.into()) else {
+    let Ok(_) = stream.write_with_ppi(data.as_slice(), ppi.into()) else {
         return AtomResult::Error(atoms::unable_to_send());
     };
 
@@ -309,7 +306,9 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
         *last_timeout = timeout;
         if let Some(time) = timeout {
             let ms = time.duration_since(now).as_millis();
-            return Event::Timeout(Some(ms));
+            // without the `+ 10` it seems that we call `handle_timeout`
+            // too early when using this value in Process.send_after
+            return Event::Timeout(Some(ms + 10));
         }
         return Event::Timeout(None);
     }
