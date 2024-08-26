@@ -115,7 +115,6 @@ fn open_stream(resource: ResourceArc<SctpResource>, id: u16) -> AtomResult {
 
 #[rustler::nif]
 fn close_stream(resource: ResourceArc<SctpResource>, id: u16) -> AtomResult {
-    // TODO: something doesnt' work in close_stream
     let mut state = resource.state.lock().expect("Unable to obtain the lock");
     let SctpState {
         assoc: Some(assoc),
@@ -284,9 +283,11 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
         }
     }
 
-    for id in streams {
+    let mut to_remove = None;
+    for id in streams.iter() {
         let Ok(mut stream) = assoc.stream(*id) else {
-            continue;
+            to_remove = Some(*id);
+            break;
         };
 
         let Ok(Some(chunks)) = stream.read() else {
@@ -299,6 +300,15 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
             .expect("Unable to read incoming data");
 
         return Event::Data(*id, chunks.ppi as u32, Binary::from_owned(owned, env));
+    }
+
+    if let Some(id) = to_remove {
+        let idx = streams
+            .iter()
+            .position(|stream_id| *stream_id == id)
+            .unwrap();
+        streams.remove(idx);
+        return Event::StreamClosed(id);
     }
 
     let timeout = assoc.poll_timeout();
