@@ -1,8 +1,8 @@
 use rustler::{Atom, Binary, Env, NifTaggedEnum, OwnedBinary, Resource, ResourceArc};
 use sctp_proto::{
     Association, AssociationHandle, ClientConfig, DatagramEvent, Endpoint, EndpointConfig,
-    Error as ProtoError, Event as SctpEvent, Payload, PayloadProtocolIdentifier, ServerConfig,
-    StreamEvent, Transmit,
+    Error as ProtoError, Event as SctpEvent, Payload, PayloadProtocolIdentifier, ReliabilityType,
+    ServerConfig, StreamEvent, Transmit,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
@@ -18,6 +18,11 @@ mod atoms {
         invalid_id,
         unable_to_stop,
         unable_to_send,
+        reliable,
+        rexmit,
+        timed,
+        invalid_reliability_type,
+        unable_to_set,
     }
 }
 
@@ -141,6 +146,40 @@ fn close_stream(resource: ResourceArc<SctpResource>, id: u16) -> AtomResult {
 
     let Ok(_) = stream.stop() else {
         return AtomResult::Error(atoms::unable_to_stop());
+    };
+
+    AtomResult::Ok
+}
+
+#[rustler::nif]
+fn configure_stream(
+    resource: ResourceArc<SctpResource>,
+    id: u16,
+    ordered: bool,
+    rel_type: Atom,
+    val: u32,
+) -> AtomResult {
+    let mut state = resource.state.lock().expect("Unable to obtain the lock");
+    let SctpState {
+        assoc: Some(assoc), ..
+    } = &mut *state
+    else {
+        return AtomResult::Error(atoms::not_connected());
+    };
+
+    let rel_type = match rel_type {
+        t if t == atoms::reliable() => ReliabilityType::Reliable,
+        t if t == atoms::rexmit() => ReliabilityType::Rexmit,
+        t if t == atoms::timed() => ReliabilityType::Timed,
+        _ => return AtomResult::Error(atoms::invalid_reliability_type()),
+    };
+
+    let Ok(mut stream) = assoc.stream(id) else {
+        return AtomResult::Error(atoms::invalid_id());
+    };
+
+    let Ok(()) = stream.set_reliability_params(!ordered, rel_type, val) else {
+        return AtomResult::Error(atoms::unable_to_set());
     };
 
     AtomResult::Ok

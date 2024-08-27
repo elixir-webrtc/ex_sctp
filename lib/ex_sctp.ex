@@ -23,6 +23,11 @@ defmodule ExSCTP do
   @type ppi() :: non_neg_integer()
 
   @typedoc """
+  SCTP stream reliability types.
+  """
+  @type reliability_type() :: :reliable | :rexmit | :timed
+
+  @typedoc """
   Event obtained by calling `poll/1`.
 
   Meaning of the events:
@@ -79,6 +84,13 @@ defmodule ExSCTP do
   """
   @spec close_stream(t(), stream_id()) :: :ok | {:error, atom()}
   def close_stream(_resource, _id), do: error()
+
+  @doc """
+  Sets stream's order and reliability parameters.
+  """
+  @spec configure_stream(t(), stream_id(), boolean(), reliability_type(), non_neg_integer()) ::
+          :ok | {:error, atom()}
+  def configure_stream(_resource, _id, _ordered?, _rel_param, _rel_value), do: error()
 
   @doc """
   Sends data over specified stream using provided `ppi`.
