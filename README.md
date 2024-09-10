@@ -17,3 +17,5 @@ def deps do
   ]
 end
 ```
+
+Please note that `ex_sctp` requires you to have Rust installed in order to compile.
