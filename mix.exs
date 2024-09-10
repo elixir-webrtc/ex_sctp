@@ -1,7 +1,7 @@
 defmodule ExSCTP.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.1.1"
   @source_url "https://github.com/elixir-webrtc/ex_sctp"
 
   def project do
@@ -46,7 +46,7 @@ defmodule ExSCTP.MixProject do
   def package do
     [
       # default files + Rust files
-      files: ~w(lib priv .formatter.exs mix.exs README* LICENSE* native),
+      files: ~w(lib .formatter.exs mix.exs README* LICENSE* native),
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => @source_url}
     ]
