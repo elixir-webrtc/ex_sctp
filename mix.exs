@@ -58,7 +58,7 @@ defmodule ExSCTP.MixProject do
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:rustler, "~> 0.36.0", runtime: false}
+      {:rustler, "~> 0.37.1", runtime: false}
     ]
   end
 

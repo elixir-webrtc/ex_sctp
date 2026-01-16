@@ -306,7 +306,7 @@ fn poll(env: Env, resource: ResourceArc<SctpResource>) -> Event {
 
             match stream_event {
                 Readable { id } | Writable { id } => {
-                    if !streams.iter().any(|stream_id| *stream_id == id) {
+                    if !streams.contains(&id) {
                         streams.push(id);
                         return Event::StreamOpened(id);
                     };
