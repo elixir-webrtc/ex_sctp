@@ -13,7 +13,7 @@ Add `ex_sctp` to dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_sctp, "~> 0.1.2"}
+    {:ex_sctp, "~> 0.1.3"}
   ]
 end
 ```
