@@ -1,7 +1,7 @@
 defmodule ExSCTP.MixProject do
   use Mix.Project
 
-  @version "0.1.2"
+  @version "0.1.3"
   @source_url "https://github.com/elixir-webrtc/ex_sctp"
 
   def project do
@@ -26,8 +26,13 @@ defmodule ExSCTP.MixProject do
       ],
 
       # code coverage
-      test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
+      test_coverage: [tool: ExCoveralls]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
         coveralls: :test,
         "coveralls.detail": :test,
         "coveralls.post": :test,
